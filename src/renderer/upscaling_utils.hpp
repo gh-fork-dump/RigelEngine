@@ -20,6 +20,7 @@
 #include "base/spatial_types.hpp"
 #include "renderer/texture.hpp"
 
+#include <optional>
 
 namespace rigel::data
 {
@@ -57,6 +58,10 @@ ViewportInfo determineViewport(const Renderer* pRenderer);
  */
 bool canUseWidescreenMode(const Renderer* pRenderer);
 
+bool canUsePixelPerfectScaling(
+  const Renderer* pRenderer,
+  const data::GameOptions& options);
+
 WidescreenViewportInfo determineWidescreenViewport(const Renderer* pRenderer);
 
 base::Vec2 scaleVec(const base::Vec2& vec, const base::Vec2f& scale);
@@ -72,7 +77,7 @@ class UpscalingBuffer
 public:
   UpscalingBuffer(Renderer* pRenderer, const data::GameOptions& options);
 
-  [[nodiscard]] base::ScopeGuard bind(bool perElementUpscaling);
+  [[nodiscard]] base::ScopeGuard bindAndClear(bool perElementUpscaling);
   void clear();
   void present(bool currentFrameIsWidescreen, bool perElementUpscaling);
 
@@ -83,8 +88,10 @@ public:
 
 private:
   RenderTargetTexture mRenderTarget;
+  std::optional<RenderTargetTexture> mSharpBilinearRenderTarget;
   Renderer* mpRenderer;
   std::uint8_t mAlphaMod = 0;
+  bool mPixelPerfectScaling = false;
 };
 
 } // namespace rigel::renderer

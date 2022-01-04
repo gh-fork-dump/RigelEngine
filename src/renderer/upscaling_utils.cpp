@@ -30,6 +30,10 @@ namespace rigel::renderer
 namespace
 {
 
+constexpr auto PIXEL_PERFECT_SCALE_X = 5;
+constexpr auto PIXEL_PERFECT_SCALE_Y = 6;
+
+
 auto asVec(const base::Size<int>& size)
 {
   return base::Vec2{size.width, size.height};
@@ -154,6 +158,19 @@ bool canUseWidescreenMode(const Renderer* pRenderer)
 }
 
 
+bool canUsePixelPerfectScaling(
+  const Renderer* pRenderer,
+  const data::GameOptions& options)
+{
+  const auto pixelPerfectBufferWidth =
+    determineLowResBufferWidth(pRenderer, options.mWidescreenModeOn);
+  return pRenderer->windowSize().width >=
+    pixelPerfectBufferWidth * PIXEL_PERFECT_SCALE_X &&
+    pRenderer->windowSize().height >=
+    data::GameTraits::viewportHeightPx * PIXEL_PERFECT_SCALE_Y;
+}
+
+
 WidescreenViewportInfo determineWidescreenViewport(const Renderer* pRenderer)
 {
   const auto info = determineViewport(pRenderer);
@@ -210,7 +227,7 @@ UpscalingBuffer::UpscalingBuffer(
 }
 
 [[nodiscard]] base::ScopeGuard
-  UpscalingBuffer::bind(const bool perElementUpscaling)
+  UpscalingBuffer::bindAndClear(const bool perElementUpscaling)
 {
   auto saved = mRenderTarget.bind();
   mpRenderer->clear();
@@ -228,17 +245,92 @@ void UpscalingBuffer::clear()
 
 
 void UpscalingBuffer::present(
-  const bool currentFrameIsWidescreen,
+  const bool isWidescreenFrame,
   const bool perElementUpscaling)
 {
+  if (perElementUpscaling)
+  {
+    mpRenderer->clear();
+
+    auto saved = renderer::saveState(mpRenderer);
+    mpRenderer->setColorModulation({255, 255, 255, mAlphaMod});
+    mRenderTarget.render(0, 0);
+    mpRenderer->submitBatch();
+    return;
+  }
+
+  const auto windowWidth = float(mpRenderer->windowSize().width);
+  const auto windowHeight = float(mpRenderer->windowSize().height);
+
+  auto setUpViewport = [&](
+                         const int textureWidth,
+                         const int textureHeight,
+                         const base::Vec2f& scale) {
+    const auto usableWidth = textureWidth * scale.x;
+    const auto usableHeight = textureHeight * scale.y;
+    const auto offsetX = (windowWidth - usableWidth) / 2.0f;
+    const auto offsetY = (windowHeight - usableHeight) / 2.0f;
+
+    mpRenderer->setGlobalTranslation({int(offsetX), int(offsetY)});
+    mpRenderer->setGlobalScale(scale);
+  };
+
+
+  if (mSharpBilinearRenderTarget)
+  {
+    auto saved = mSharpBilinearRenderTarget->bind();
+    mpRenderer->setGlobalScale({PIXEL_PERFECT_SCALE_X, PIXEL_PERFECT_SCALE_Y});
+    mRenderTarget.render(0, 0);
+  }
+
   mpRenderer->clear();
 
   auto saved = renderer::saveState(mpRenderer);
-  setupPresentationViewport(
-    mpRenderer, perElementUpscaling, currentFrameIsWidescreen);
-
   mpRenderer->setColorModulation({255, 255, 255, mAlphaMod});
-  mRenderTarget.render(0, 0);
+
+  if (mSharpBilinearRenderTarget)
+  {
+    const auto scale = std::min(
+      windowWidth / mSharpBilinearRenderTarget->width(),
+      windowHeight / mSharpBilinearRenderTarget->height());
+
+    const auto usedWidth = isWidescreenFrame
+      ? mSharpBilinearRenderTarget->width()
+      : PIXEL_PERFECT_SCALE_X * data::GameTraits::viewportWidthPx;
+    setUpViewport(
+      usedWidth, mSharpBilinearRenderTarget->height(), {scale, scale});
+    mSharpBilinearRenderTarget->render(0, 0);
+  }
+  else if (mPixelPerfectScaling)
+  {
+    const auto usedWidth = isWidescreenFrame
+      ? mRenderTarget.width()
+      : data::GameTraits::viewportWidthPx;
+    setUpViewport(
+      usedWidth,
+      mRenderTarget.height(),
+      {PIXEL_PERFECT_SCALE_X, PIXEL_PERFECT_SCALE_Y});
+    mRenderTarget.render(0, 0);
+  }
+  else
+  {
+    const auto info = renderer::determineViewport(mpRenderer);
+    mpRenderer->setGlobalScale(info.mScale);
+
+    if (isWidescreenFrame)
+    {
+      const auto offset =
+        renderer::determineWidescreenViewport(mpRenderer).mLeftPaddingPx;
+      mpRenderer->setGlobalTranslation({offset, 0});
+    }
+    else
+    {
+      mpRenderer->setGlobalTranslation(info.mOffset);
+    }
+
+    mRenderTarget.render(0, 0);
+  }
+
   mpRenderer->submitBatch();
 }
 
@@ -252,6 +344,40 @@ void UpscalingBuffer::setAlphaMod(const std::uint8_t alphaMod)
 void UpscalingBuffer::updateConfiguration(const data::GameOptions& options)
 {
   mRenderTarget = createFullscreenRenderTarget(mpRenderer, options);
+
+  if (options.mPerElementUpscalingEnabled)
+  {
+    mSharpBilinearRenderTarget.reset();
+    mPixelPerfectScaling = false;
+    return;
+  }
+
+  const auto pixelPerfectScalingWanted =
+    options.mUpscalingFilter == data::UpscalingFilter::PixelPerfect;
+  const auto pixelPerfectScalingPossible =
+    canUsePixelPerfectScaling(mpRenderer, options);
+  const auto fallbackToSharpBilinear =
+    pixelPerfectScalingWanted && !pixelPerfectScalingPossible;
+
+  mPixelPerfectScaling =
+    pixelPerfectScalingWanted && pixelPerfectScalingPossible;
+
+  if (
+    options.mUpscalingFilter == data::UpscalingFilter::SharpBilinear ||
+    fallbackToSharpBilinear)
+  {
+    mSharpBilinearRenderTarget = RenderTargetTexture{
+      mpRenderer,
+      determineLowResBufferWidth(mpRenderer, options.mWidescreenModeOn) *
+        PIXEL_PERFECT_SCALE_X,
+      data::GameTraits::viewportHeightPx * PIXEL_PERFECT_SCALE_Y};
+    mpRenderer->setFilteringEnabled(mSharpBilinearRenderTarget->data(), true);
+  }
+  else
+  {
+    mSharpBilinearRenderTarget.reset();
+  }
+
   mpRenderer->setFilteringEnabled(
     mRenderTarget.data(),
     options.mUpscalingFilter == data::UpscalingFilter::Bilinear);

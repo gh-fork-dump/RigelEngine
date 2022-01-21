@@ -11,7 +11,7 @@ if ! which $CLANG_FORMAT > /dev/null 2>&1; then
     exit 1
 fi
 
-if ! $CLANG_FORMAT --version | grep "11\.0\.0" > /dev/null 2>&1; then
+if ! $CLANG_FORMAT --version | grep "11\.\([0-9]\+\)\.0" > /dev/null 2>&1; then
     echo "error: wrong version of clang-format found, version 11.0.0 needed"
     exit 1
 fi

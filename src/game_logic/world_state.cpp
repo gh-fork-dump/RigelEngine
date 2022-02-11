@@ -172,6 +172,30 @@ WorldState::WorldState(
   engine::SpriteFactory* pSpriteFactory,
   const data::GameSessionId sessionId,
   data::map::LevelData&& loadedLevel)
+  : WorldState(
+      pServiceProvider,
+      pRenderer,
+      pResources,
+      pPlayerModel,
+      pOptions,
+      pSpriteFactory,
+      sessionId,
+      determineDynamicMapSections(loadedLevel.mMap, loadedLevel.mActors),
+      std::move(loadedLevel))
+{
+}
+
+
+WorldState::WorldState(
+  IGameServiceProvider* pServiceProvider,
+  renderer::Renderer* pRenderer,
+  const assets::ResourceLoader* pResources,
+  data::PlayerModel* pPlayerModel,
+  const data::GameOptions* pOptions,
+  engine::SpriteFactory* pSpriteFactory,
+  const data::GameSessionId sessionId,
+  const DynamicMapSectionData& dynamicMapSections,
+  data::map::LevelData&& loadedLevel)
   : mMap(std::move(loadedLevel.mMap))
   , mEntities(mEventManager)
   , mEntityFactory(
@@ -209,7 +233,8 @@ WorldState::WorldState(
   , mSpriteRenderingSystem(pRenderer, &pSpriteFactory->textureAtlas())
   , mMapRenderer(
       pRenderer,
-      &mMap,
+      dynamicMapSections.mMapStaticParts,
+      &mMap.attributeDict(),
       engine::MapRenderer::MapRenderData{
         std::move(loadedLevel.mTileSetImage),
         std::move(loadedLevel.mBackdropImage),
@@ -262,6 +287,7 @@ WorldState::WorldState(
   , mBackdropSwitchCondition(loadedLevel.mBackdropSwitchCondition)
 {
   mEntityFactory.createEntitiesForLevel(loadedLevel.mActors);
+  createDynamicSectionEntities(dynamicMapSections, mEntities);
 
   const auto counts = countBonusRelatedItems(mEntities);
   mBonusInfo.mInitialCameraCount = counts.mCameraCount;

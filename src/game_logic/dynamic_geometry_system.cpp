@@ -20,6 +20,7 @@
 #include "data/map.hpp"
 #include "data/sound_ids.hpp"
 #include "engine/base_components.hpp"
+#include "engine/collision_checker.hpp"
 #include "engine/entity_tools.hpp"
 #include "engine/life_time_components.hpp"
 #include "engine/motion_smoothing.hpp"
@@ -91,7 +92,7 @@ void spawnTileDebris(
 
 void spawnTileDebrisForSection(
   const engine::components::BoundingBox& mapSection,
-  data::map::Map& map,
+  const data::map::Map& map,
   entityx::EntityManager& entities,
   engine::RandomNumberGenerator& randomGen)
 {
@@ -119,6 +120,7 @@ void explodeMapSection(
   const base::Rect<int>& mapSection,
   data::map::Map& map,
   entityx::EntityManager& entityManager,
+  entityx::EventManager& eventManager,
   engine::RandomNumberGenerator& randomGenerator)
 {
   spawnTileDebrisForSection(mapSection, map, entityManager, randomGenerator);
@@ -137,7 +139,11 @@ void explodeMapSection(
   GlobalState& s)
 {
   explodeMapSection(
-    mapSection, *s.mpMap, *d.mpEntityManager, *d.mpRandomGenerator);
+    mapSection,
+    *s.mpMap,
+    *d.mpEntityManager,
+    *d.mpEvents,
+    *d.mpRandomGenerator);
 }
 
 
@@ -188,6 +194,151 @@ void squashTileSection(base::Rect<int>& mapSection, data::map::Map& map)
 } // namespace
 
 
+DynamicMapSectionData determineDynamicMapSections(
+  const data::map::Map& originalMap,
+  const std::vector<data::map::LevelData::Actor>& actorDescriptions)
+{
+  DynamicMapSectionData result{originalMap, {}};
+  auto& map = result.mMapStaticParts;
+
+  entityx::EventManager dummyEvents;
+  entityx::EntityManager dummyEntities{dummyEvents};
+  engine::CollisionChecker checker{&map, dummyEntities, dummyEvents};
+
+
+  std::vector<base::Rect<int>> fallingSections;
+
+  for (const auto& actor : actorDescriptions)
+  {
+    if (actor.mAssignedArea)
+    {
+      const auto& section = *actor.mAssignedArea;
+      map.clearSection(
+        section.left(), section.top(), section.size.width, section.size.height);
+
+      switch (actor.mID)
+      {
+        case data::ActorID::Dynamic_geometry_1:
+        case data::ActorID::Dynamic_geometry_4:
+        case data::ActorID::Dynamic_geometry_5:
+        case data::ActorID::Dynamic_geometry_6:
+        case data::ActorID::Dynamic_geometry_7:
+        case data::ActorID::Dynamic_geometry_8:
+          fallingSections.push_back(section);
+          break;
+
+        default:
+          break;
+      }
+    }
+    else
+    {
+      if (actor.mID == data::ActorID::Missile_intact)
+      {
+        const auto x = actor.mPosition.x;
+        auto y = actor.mPosition.y - 12;
+        while (y >= 0 && !checker.isTouchingCeiling({{x, y + 1}, {3, 1}}))
+        {
+          --y;
+        }
+
+        if (y >= 2)
+        {
+          map.clearSection(x, y - 2, 3, 3);
+          result.mEntitySectionsToAdd.push_back({{x, y - 2}, {3, 3}});
+        }
+      }
+    }
+  }
+
+  for (auto y = 0; y < map.height(); ++y)
+  {
+    for (auto x = 0; x < map.width(); ++x)
+    {
+      if (map.attributes(x, y).isFlammable())
+      {
+        auto endX = x + 1;
+        while (endX < map.width() && map.attributes(endX, y).isFlammable())
+        {
+          ++endX;
+        }
+
+        auto endY = y + 1;
+        while (endY < map.height() && map.attributes(x, endY).isFlammable())
+        {
+          ++endY;
+        }
+
+        const auto section = base::Rect<int>{{x, y}, {endX - x, endY - y}};
+        map.clearSection(x, y, section.size.width, section.size.height);
+        result.mEntitySectionsToAdd.push_back(section);
+      }
+    }
+  }
+
+  auto findAffectedSectionBelow =
+    [&](const base::Rect<int>& section) -> std::optional<std::tuple<int, int>> {
+    for (auto y = section.bottom() + 1; y < map.height() &&
+         !checker.isOnSolidGround(
+           {{section.left(), y - 1}, {section.size.width, 1}});
+         ++y)
+    {
+      for (auto x = section.left(); x < section.left() + section.size.width;
+           ++x)
+      {
+        if (map.tileAt(0, x, y) != 0 || map.tileAt(1, x, y) != 0)
+        {
+          auto y2 = y + 1;
+          while (y2 < map.height() &&
+                 !checker.isOnSolidGround(
+                   {{section.left(), y2 - 1}, {section.size.width, 1}}))
+          {
+            ++y2;
+          }
+
+          return std::tuple{y, y2};
+        }
+      }
+    }
+
+    return std::nullopt;
+  };
+
+
+  for (const auto& section : fallingSections)
+  {
+    if (const auto areaBelow = findAffectedSectionBelow(section))
+    {
+      const auto [top, bottom] = *areaBelow;
+      result.mEntitySectionsToAdd.push_back(
+        {{section.left(), top}, {section.size.width, bottom - top}});
+    }
+  }
+
+  for (const auto& section : result.mEntitySectionsToAdd)
+  {
+    map.clearSection(
+      section.left(), section.top(), section.size.width, section.size.height);
+  }
+
+  return result;
+}
+
+
+void createDynamicSectionEntities(
+  const DynamicMapSectionData& dynamicSections,
+  entityx::EntityManager& entities)
+{
+  for (const auto& section : dynamicSections.mEntitySectionsToAdd)
+  {
+    auto sectionCover = entities.create();
+    sectionCover.assign<components::MapGeometryLink>(section);
+    sectionCover.assign<engine::components::WorldPosition>(
+      base::Vec2{section.left(), section.bottom()});
+  }
+}
+
+
 DynamicGeometrySystem::DynamicGeometrySystem(
   IGameServiceProvider* pServiceProvider,
   entityx::EntityManager* pEntityManager,
@@ -218,7 +369,8 @@ void DynamicGeometrySystem::receive(const events::ShootableKilled& event)
 
   const auto& mapSection =
     entity.component<MapGeometryLink>()->mLinkedGeometrySection;
-  explodeMapSection(mapSection, *mpMap, *mpEntityManager, *mpRandomGenerator);
+  explodeMapSection(
+    mapSection, *mpMap, *mpEntityManager, *mpEvents, *mpRandomGenerator);
   mpServiceProvider->playSound(data::SoundId::BigExplosion);
   mpEvents->emit(rigel::events::ScreenFlash{});
 }
@@ -244,7 +396,8 @@ void DynamicGeometrySystem::receive(
   // given values, e.g. bottom left and size
   engine::components::BoundingBox mapSection{
     event.mImpactPosition - base::Vec2{0, 2}, {3, 3}};
-  explodeMapSection(mapSection, *mpMap, *mpEntityManager, *mpRandomGenerator);
+  explodeMapSection(
+    mapSection, *mpMap, *mpEntityManager, *mpEvents, *mpRandomGenerator);
   mpEvents->emit(rigel::events::ScreenFlash{});
 }
 
@@ -338,7 +491,6 @@ void behaviors::DynamicGeometryController::update(
     else
     {
       squashTileSection(mapSection, *s.mpMap);
-      ++position.y;
     }
   };
 

@@ -57,6 +57,7 @@ using namespace std;
 using data::PlayerModel;
 using engine::components::InterpolateMotion;
 using engine::components::WorldPosition;
+using game_logic::components::MapGeometryLink;
 
 
 namespace
@@ -987,6 +988,20 @@ void GameWorld::drawMapAndSprites(
 
   auto& state = *mpState;
 
+  auto renderDynamicMapSections = [&](const auto drawMode) {
+    state.mEntities.each<MapGeometryLink, WorldPosition>(
+      [&](
+        entityx::Entity e, const MapGeometryLink& link, const WorldPosition&) {
+        const auto pixelPos =
+          engine::interpolatedPixelPosition(e, interpolationFactor) -
+          data::tileVectorToPixelVector(
+            base::Vec2{0, link.mLinkedGeometrySection.size.height - 1} +
+            params.mRenderStartPosition);
+        state.mMapRenderer.renderDynamicSection(
+          state.mMap, link.mLinkedGeometrySection, pixelPos, drawMode);
+      });
+  };
+
   auto renderBackdrop = [&]() {
     if (state.mBackdropFlashColor)
     {
@@ -1004,12 +1019,14 @@ void GameWorld::drawMapAndSprites(
   auto renderBackgroundLayers = [&]() {
     state.mMapRenderer.renderBackground(
       params.mRenderStartPosition, params.mViewportSize);
+    renderDynamicMapSections(MapRenderer::DrawMode::Background);
     state.mSpriteRenderingSystem.renderRegularSprites();
   };
 
   auto renderForegroundLayers = [&]() {
     state.mMapRenderer.renderForeground(
       params.mRenderStartPosition, params.mViewportSize);
+    renderDynamicMapSections(MapRenderer::DrawMode::Foreground);
     state.mSpriteRenderingSystem.renderForegroundSprites();
 
     // tile debris

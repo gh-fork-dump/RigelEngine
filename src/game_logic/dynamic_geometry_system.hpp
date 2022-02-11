@@ -18,18 +18,19 @@
 
 #include "base/spatial_types.hpp"
 #include "base/warnings.hpp"
+#include "data/map.hpp"
 
 RIGEL_DISABLE_WARNINGS
 #include <entityx/entityx.h>
 RIGEL_RESTORE_WARNINGS
 
+#include <vector>
+
+
 namespace rigel
 {
 struct IGameServiceProvider;
-namespace data::map
-{
-class Map;
-}
+
 namespace engine
 {
 class RandomNumberGenerator;
@@ -49,6 +50,23 @@ struct ShootableKilled;
 
 namespace rigel::game_logic
 {
+
+struct DynamicMapSectionData
+{
+  data::map::Map mMapStaticParts;
+  std::vector<base::Rect<int>> mEntitySectionsToAdd;
+};
+
+
+DynamicMapSectionData determineDynamicMapSections(
+  const data::map::Map& originalMap,
+  const std::vector<data::map::LevelData::Actor>& actorDescriptions);
+
+
+void createDynamicSectionEntities(
+  const DynamicMapSectionData& dynamicSections,
+  entityx::EntityManager& entities);
+
 
 class DynamicGeometrySystem : public entityx::Receiver<DynamicGeometrySystem>
 {

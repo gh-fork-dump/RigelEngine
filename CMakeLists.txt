@@ -37,6 +37,11 @@ if(NOT EXISTS "${CMAKE_SOURCE_DIR}/3rd_party/entityx/entityx/Entity.h")
 endif()
 
 
+if(VITA)
+    include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
+    set(USE_GL_ES ON)
+    #add_compile_options(-marm -march=armv7-a -mtune=cortex-a9)
+endif()
 if("${CMAKE_SYSTEM_NAME}" STREQUAL "Emscripten")
     set(WEBASSEMBLY_GAME_PATH "" CACHE PATH "Path to folder containing Duke Nukem II files")
     set(USE_GL_ES ON)

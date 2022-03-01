@@ -373,6 +373,43 @@ target_link_libraries(rigel_core
     stb
 )
 
+if(VITA)
+    # No dynamic linking, so we specify the libraries manually
+    target_link_libraries(rigel_core
+        PRIVATE
+        # SDL2_mixer
+        vorbisfile
+        vorbis
+        ogg
+        mpg123
+        FLAC
+        mikmod
+
+        # PowerVR OpenGLES 2 libraries
+        libGLESv2_stub_weak
+        libIMGEGL_stub_weak
+        libgpu_es4_ext_stub_weak
+
+        # Core Sony libraries
+        SceAppMgr_stub
+        SceIme_stub_weak
+        SceMotion_stub
+        SceCommonDialog_stub
+        SceHid_stub
+        SceGxm_stub
+        SceAudio_stub
+        ScePower_stub
+        SceDisplay_stub
+        SceCtrl_stub
+        SceTouch_stub
+        SceIofilemgr_stub
+        SceVshBridge_stub
+        SceSysmodule_stub
+        m
+        pthread
+    )
+endif()
+
 rigel_enable_warnings(rigel_core)
 
 if(USE_GL_ES)
@@ -454,5 +491,18 @@ elseif(UNIX)
     )
     install(FILES ${CMAKE_SOURCE_DIR}/dist/linux/rigelengine.png
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/48x48/apps
+    )
+elseif(VITA)
+    include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
+    set(VITA_APP_NAME "RigelEngine")
+    set(VITA_TITLEID  "NUKM00001")
+    set(VITA_VERSION  "01.00")
+    set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
+    set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
+    vita_create_self(RigelEngine.self RigelEngine UNSAFE)
+    vita_create_vpk(RigelEngine.vpk ${VITA_TITLEID} RigelEngine.self
+        VERSION ${VITA_VERSION}
+        NAME    ${VITA_APP_NAME}
+        FILE    ${CMAKE_SOURCE_DIR}/module module
     )
 endif()

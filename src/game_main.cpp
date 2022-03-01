@@ -37,6 +37,12 @@ RIGEL_RESTORE_WARNINGS
 
 #include <filesystem>
 
+#ifdef __vita__
+#define VITA_GAME_PATH "ux0:/data/duke"
+
+unsigned int sceLibcHeapSize = 16 * 1024 * 1024;
+unsigned int _newlib_heap_size_user = 64 * 1024 * 1024;
+#endif
 
 namespace rigel
 {
@@ -74,6 +80,26 @@ void setupForFirstLaunch(
 {
   namespace fs = std::filesystem;
 
+#ifdef __vita__
+  // For simplicity's sake, the game data and config files are located in a
+  // single directory on the memory card.
+  auto gamePath = fs::path(VITA_GAME_PATH);
+  if (!isValidGamePath(gamePath))
+  {
+    throw std::runtime_error(
+      "No game data (NUKEM2.CMP file) found in " VITA_GAME_PATH ".");
+  }
+
+  // Import original game's profile data, if our profile is still 'empty'
+  if (!userProfile.hasProgressData())
+  {
+    importOriginalGameProfileData(userProfile, gamePath.u8string() + "/");
+  }
+
+  // Persist the game path for the next launch.
+  userProfile.mGamePath = gamePath;
+  userProfile.saveToDisk();
+#else
   auto gamePath = fs::path{};
 
   // Case 1: A path is given on the command line on first launch. Use that.
@@ -128,6 +154,7 @@ for more info.)");
   // launch.
   userProfile.mGamePath = fs::canonical(gamePath);
   userProfile.saveToDisk();
+#endif
 }
 
 

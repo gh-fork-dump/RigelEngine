@@ -806,6 +806,10 @@ std::optional<std::filesystem::path> createOrGetPreferencesPath()
 {
   namespace fs = std::filesystem;
 
+#ifdef __vita__
+  return fs::path("ux0:data/duke");
+#endif
+
   auto deleter = [](char* path) {
     SDL_free(path);
   };
